@@ -49,13 +49,15 @@ pipeline{
                 sh "trivy fs . > trivyfs.txt"
             }
         }
-        stage("Docker Build & Push"){
-            steps{
-                script{
-                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker'){   
-                       sh "docker build --build-arg TMDB_V3_API_KEY=093964813c2869a88750a68853d212fb -t netflix ."
-                       sh "docker tag netflix p3rryhehe/kltn1:v1 "
-                       sh "docker push p3rryhehe/kltn1:v1 "
+        stage("Docker Build & Push") {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        withCredentials([string(credentialsId: 'tmdb-api-key', variable: 'TMDB_API_KEY')]) {
+                            sh "docker build --build-arg TMDB_V3_API_KEY=\${TMDB_API_KEY} -t netflix ."
+                            sh "docker tag netflix p3rryhehe/kltn1:v1"
+                            sh "docker push p3rryhehe/kltn1:v1"
+                        }    
                     }
                 }
             }
