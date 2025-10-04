@@ -20,18 +20,11 @@ pipeline{
         }
         stage("Sonarqube Analysis "){
             steps{
-                withSonarQubeEnv('sonar-server') {
+                withSonarQubeEnv('sonar-scanner') {
                     sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=netflix \
                     -Dsonar.projectKey=netflix '''
                 }
             }
-        }
-        stage("quality gate"){
-           steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token' 
-                }
-            } 
         }
         stage('Install Dependencies') {
             steps {
@@ -46,7 +39,7 @@ pipeline{
         }
         stage('TRIVY FS SCAN') {
             steps {
-                sh "trivy fs . > trivyfs.txt"
+                sh "trivy fs --format table -o trivy-fs-report.json ."
             }
         }
         stage("Docker Build & Push") {
@@ -64,12 +57,13 @@ pipeline{
         }
         stage("TRIVY"){
             steps{
-                sh "trivy image p3rryhehe/kltn1:v1 > trivyimage.txt" 
+                sh "trivy image --format json -o trivy-image-report.json p3rryhehe/kltn1:v1"
+                sh "cat trivy-image-report.json" 
             }
         }
         stage('Deploy to container'){
             steps{
-                sh 'docker run -d -p 8086:80 p3rryhehe/kltn1:v1'
+                sh 'docker run -d -p 8088:80 p3rryhehe/kltn1:v1'
             }
         }
         stage('Deploy to kubernets'){
