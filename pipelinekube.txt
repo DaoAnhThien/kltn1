@@ -1,0 +1,81 @@
+pipeline{
+    agent any
+    tools{
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+    environment {
+        SCANNER_HOME=tool 'sonar-scanner'
+    }
+    stages {
+        stage('clean workspace'){
+            steps{
+                cleanWs()
+            }
+        }
+        stage('Checkout from Git'){
+            steps{
+                git branch: 'main', url: 'https://github.com/Aj7Ay/Netflix-clone'
+            }
+        }
+        stage("Sonarqube Analysis "){
+            steps{
+                withSonarQubeEnv('sonar-scanner') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=netflix \
+                    -Dsonar.projectKey=netflix '''
+                }
+            }
+        }
+        stage('Install Dependencies') {
+            steps {
+                sh "npm install"
+            }
+        }
+        stage('OWASP FS SCAN') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('TRIVY FS SCAN') {
+            steps {
+                sh "trivy fs --format table -o trivy-fs-report.json ."
+            }
+        }
+        stage("Docker Build & Push") {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        withCredentials([string(credentialsId: 'tmdb-api-key', variable: 'TMDB_API_KEY')]) {
+                            sh "docker build --build-arg TMDB_V3_API_KEY=\${TMDB_API_KEY} -t netflix ."
+                            sh "docker tag netflix p3rryhehe/kltn1:v1"
+                            sh "docker push p3rryhehe/kltn1:v1"
+                        }    
+                    }
+                }
+            }
+        }
+        stage("TRIVY"){
+            steps{
+                sh "trivy image --format json -o trivy-image-report.json p3rryhehe/kltn1:v1"
+                sh "cat trivy-image-report.json" 
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh 'kubectl apply -f Kubernetes/deployment.yml'
+            }
+        }
+    }
+    post {
+     always {
+        emailext attachLog: true,
+            subject: "'${currentBuild.result}'",
+            body: "Project: ${env.JOB_NAME}<br/>" +
+                "Build Number: ${env.BUILD_NUMBER}<br/>" +
+                "URL: ${env.BUILD_URL}<br/>",
+            to: 'daoanhthienahihi@gmail.com',                               
+            attachmentsPattern: 'trivy-fs-report.json,trivy-image-report.json'
+        }
+    }
+}
