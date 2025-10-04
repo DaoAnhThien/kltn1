@@ -63,22 +63,9 @@ pipeline{
         }
         stage('Deploy to container'){
             steps{
-                sh 'docker run -d -p 8088:80 p3rryhehe/kltn1:v1'
+                sh 'docker run -d -p 8070:80 p3rryhehe/kltn1:v1'
             }
         }
-        stage('Deploy to kubernets'){
-            steps{
-                script{
-                    dir('Kubernetes') {
-                        withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
-                                sh 'kubectl apply -f deployment.yml'
-                                sh 'kubectl apply -f service.yml'
-                        }   
-                    }
-                }
-            }
-        }
-
     }
     post {
      always {
@@ -87,8 +74,8 @@ pipeline{
             body: "Project: ${env.JOB_NAME}<br/>" +
                 "Build Number: ${env.BUILD_NUMBER}<br/>" +
                 "URL: ${env.BUILD_URL}<br/>",
-            to: 'iambatmanthegoat@gmail.com',                                #change mail here
-            attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+            to: 'daoanhthienahihi@gmail.com',                               
+            attachmentsPattern: 'trivy-fs-report.json,trivy-image-report.json'
         }
     }
 }
