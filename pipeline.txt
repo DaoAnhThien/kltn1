@@ -86,11 +86,17 @@ pipeline{
                 fi
     
                 # prompt
-                PROMPT="Tóm tắt lỗ hổng từ JSON sau: $VULNS
-                    Yêu cầu:
-                        - Bảng số lượng theo mức độ: CRITICAL, HIGH, MEDIUM, LOW
-                        - Liệt kê toàn bộCVE, gói, mức độ, mô tả ngắn
-                        - Dùng Markdown, tiếng Việt, rõ ràng."
+                PROMPT="Bạn là chuyên gia bảo mật phần mềm. Phân tích và tóm tắt các lỗ hổng bảo mật từ dữ liệu JSON sau: $VULNS
+                        Yêu cầu output chính xác theo cấu trúc sau (không thêm nội dung thừa, chỉ output theo định dạng này):
+                        Bảng số lượng lỗ hổng theo mức độ nghiêm trọng:
+                        - Sử dụng bảng Markdown với hai cột: 'Mức độ' và 'Số lượng'.
+                        - Bao gồm các mức: CRITICAL, HIGH, MEDIUM, LOW, và UNKNOWN (nếu có lỗ hổng thuộc mức khác).
+                        - Nếu không có lỗ hổng ở mức nào, ghi số lượng là 0.
+                        Danh sách chi tiết tất cả lỗ hổng:
+                        - Sử dụng bảng Markdown với bốn cột: 'CVE', 'Gói', 'Mức độ', 'Mô tả ngắn gọn'.
+                        - Liệt kê toàn bộ, không bỏ sót bất kỳ lỗ hổng nào.
+                        - Giữ mô tả ngắn gọn (dưới 50 từ mỗi mục), dịch hoặc giữ nguyên nếu cần thiết để dễ hiểu.
+                        Toàn bộ output phải bằng tiếng Việt, sử dụng Markdown để định dạng rõ ràng, dễ đọc. Không thêm tiêu đề hoặc giải thích ngoài yêu cầu."
     
                 # Gọi model
                 ollama run llama3.2:3b "$PROMPT" > analysis_ollama.json
