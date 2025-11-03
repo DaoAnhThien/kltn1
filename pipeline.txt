@@ -6,6 +6,8 @@ pipeline{
     }
     environment {
         SCANNER_HOME=tool 'sonar-scanner'
+        GROQ_API_KEY = credentials('groq')
+        WORKSPACE_PATH = '/var/lib/jenkins/workspace/jenkins-pipeline'
     }
     stages {
         stage('clean workspace'){
@@ -61,9 +63,52 @@ pipeline{
                 sh "cat trivy-image-report.json" 
             }
         }
+        stage('LLM Analysis') {
+    when {
+        expression { fileExists('trivy-image-report.json') }
+    }
+    steps {
+        sh '''
+            # Khởi động Ollama 
+            pgrep ollama > /dev/null || (ollama serve &) && sleep 3
+
+            # Lấy vulnerabilities bằng jq 
+            VULNS=$(jq -c '
+                [.Results[].Vulnerabilities[]? | 
+                {CVE: .VulnerabilityID, Pkg: .PkgName, Sev: .Severity, Desc: .Title}
+                ]' trivy-image-report.json)
+
+            # Nếu không có lỗ hổng
+            if [ -z "$VULNS" ] || [ "$VULNS" = "[]" ]; then
+                echo "# Không phát hiện lỗ hổng" > analysis_ollama.json
+                cat analysis_ollama.json
+                exit 0
+            fi
+
+            # prompt
+            PROMPT="Tóm tắt lỗ hổng từ JSON sau: $VULNS
+                Yêu cầu:
+                    - Bảng số lượng theo mức độ: CRITICAL, HIGH, MEDIUM, LOW
+                    - Liệt kê toàn bộCVE, gói, mức độ, mô tả ngắn
+                    - Dùng Markdown, tiếng Việt, rõ ràng."
+
+            # Gọi model
+            ollama run llama3.2:3b "$PROMPT" > analysis_ollama.json
+
+            # Hiển thị báo cáo 
+            echo "BÁO CÁO"
+            cat analysis_ollama.json
+        '''
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'analysis_ollama.json', allowEmptyArchive: true
+        }
+    }
+}
         stage('Deploy to container'){
             steps{
-                sh 'docker run -d -p 8070:80 p3rryhehe/kltn1:v1'
+                sh 'docker run -d -p 8077:80 p3rryhehe/kltn1:v1'
             }
         }
     }
