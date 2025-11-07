@@ -64,57 +64,49 @@ pipeline{
             }
         }
         stage('LLM Analysis') {
-            when {
-                expression { fileExists('trivy-image-report.json') }
-            }
-            steps {
-                sh '''
-                # Khởi động Ollama 
-                pgrep ollama > /dev/null || (ollama serve &) && sleep 3
-    
-                # Lấy vulnerabilities bằng jq 
-                VULNS=$(jq -c '
-                    [.Results[].Vulnerabilities[]? | 
-                    {CVE: .VulnerabilityID, Pkg: .PkgName, Sev: .Severity, Desc: .Title}
-                    ]' trivy-image-report.json)
-    
-                # Nếu không có lỗ hổng
-                if [ -z "$VULNS" ] || [ "$VULNS" = "[]" ]; then
-                    echo "# Không phát hiện lỗ hổng" > analysis_ollama.json
-                    cat analysis_ollama.json
-                    exit 0
-                fi
-    
-                # prompt
-                PROMPT="Bạn là chuyên gia bảo mật phần mềm. Phân tích và tóm tắt các lỗ hổng bảo mật từ dữ liệu JSON sau: $VULNS
-                        Yêu cầu output chính xác theo cấu trúc sau (không thêm nội dung thừa, chỉ output theo định dạng này):
-                        Bảng số lượng lỗ hổng theo mức độ nghiêm trọng:
-                        - Sử dụng bảng Markdown với hai cột: 'Mức độ' và 'Số lượng'.
-                        - Bao gồm các mức: CRITICAL, HIGH, MEDIUM, LOW, và UNKNOWN (nếu có lỗ hổng thuộc mức khác).
-                        - Nếu không có lỗ hổng ở mức nào, ghi số lượng là 0.
-                        Danh sách chi tiết tất cả lỗ hổng:
-                        - Sử dụng bảng Markdown với bốn cột: 'CVE', 'Gói', 'Mức độ', 'Mô tả ngắn gọn'.
-                        - Liệt kê toàn bộ, không bỏ sót bất kỳ lỗ hổng nào.
-                        - Giữ mô tả ngắn gọn (dưới 50 từ mỗi mục), dịch hoặc giữ nguyên nếu cần thiết để dễ hiểu.
-                        Toàn bộ output phải bằng tiếng Việt, sử dụng Markdown để định dạng rõ ràng, dễ đọc. Không thêm tiêu đề hoặc giải thích ngoài yêu cầu."
-    
-                # Gọi model
-                ollama run llama3.2:3b "$PROMPT" > analysis_ollama.json
-    
-                # Hiển thị báo cáo 
-                echo "BÁO CÁO"
+    when {
+        expression { fileExists('trivy-image-report.json') }
+    }
+    steps {
+        sh '''
+            echo "[INFO] Starting LLM analysis (optimized for 5GB VM)..."
+
+            # Chạy Ollama nếu chưa khởi động, giữ sống 60s để tránh chiếm RAM lâu
+            pgrep ollama > /dev/null || (OLLAMA_KEEPALIVE=60 nohup ollama serve > /dev/null 2>&1 &)
+            sleep 2
+
+            # Lấy vulnerabilities nhỏ gọn (chỉ 100 đầu tiên để tránh quá tải)
+            VULNS=$(jq -c '[.Results[].Vulnerabilities[]? | {CVE: .VulnerabilityID, Pkg: .PkgName, Sev: .Severity, Desc: .Title, Ref: .PrimaryURL}] | .[:100]' trivy-image-report.json)
+
+            if [ -z "$VULNS" ] || [ "$VULNS" = "[]" ]; then
+                echo "# Không phát hiện lỗ hổng" > analysis_ollama.json
                 cat analysis_ollama.json
-            '''
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'analysis_ollama.json', allowEmptyArchive: true
-                }
-            }
+                exit 0
+            fi
+
+            # Prompt tinh gọn, hạn chế token
+            PROMPT="Bạn là chuyên gia bảo mật. Hãy tóm tắt và phân tích các lỗ hổng bảo mật sau đây (JSON):
+            $VULNS
+            Yêu cầu:
+            1. Bảng tóm tắt số lượng lỗ hổng theo mức độ (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN).
+            2. Bảng chi tiết với cột: CVE | Gói | Mức độ | Mô tả đầy đủ | URL.
+            Output phải bằng tiếng Việt, trình bày Markdown rõ ràng, không thêm nội dung ngoài yêu cầu."
+
+            # Giới hạn token để tránh hết RAM
+           ollama run llama3.2:1b "$PROMPT" > analysis_ollama.json
+
+
+        '''
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'analysis_ollama.json', allowEmptyArchive: true
         }
+    }
+}
         stage('Deploy to container'){
             steps{
-                sh 'docker run -d -p 8077:80 p3rryhehe/kltn1:v1'
+                sh 'docker run -d -p 8014:80 p3rryhehe/kltn1:v1'
             }
         }
     }
@@ -130,3 +122,4 @@ pipeline{
         }
     }
 }
+
