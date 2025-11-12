@@ -1,11 +1,11 @@
-pipeline{
+pipeline {
     agent any
-    tools{
+    tools {
         jdk 'jdk17'
         nodejs 'node16'
     }
     environment {
-        SCANNER_HOME=tool 'sonar-scanner'
+        SCANNER_HOME = tool 'sonar-scanner'
         GROQ_API_KEY = credentials('groq')
         WORKSPACE_PATH = '/var/lib/jenkins/workspace/netflix'
         DOJO_URL = 'http://127.0.0.1:8089'
@@ -13,18 +13,18 @@ pipeline{
         DOJO_PRODUCT_NAME = 'Netflix Clone App'
     }
     stages {
-        stage('clean workspace'){
-            steps{
+        stage('clean workspace') {
+            steps {
                 cleanWs()
             }
         }
-        stage('Checkout from Git'){
-            steps{
+        stage('Checkout from Git') {
+            steps {
                 git branch: 'main', url: 'https://github.com/DaoAnhThien/kltn1'
             }
         }
-        stage("Sonarqube Analysis "){
-            steps{
+        stage("Sonarqube Analysis ") {
+            steps {
                 withSonarQubeEnv('sonar-scanner') {
                     sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=netflix \
                     -Dsonar.projectKey=netflix '''
@@ -55,140 +55,138 @@ pipeline{
                             sh "docker build --build-arg TMDB_V3_API_KEY=\${TMDB_API_KEY} -t netflix ."
                             sh "docker tag netflix p3rryhehe/kltn1:v1"
                             sh "docker push p3rryhehe/kltn1:v1"
-                        }    
+                        }
                     }
                 }
             }
         }
-        stage("TRIVY"){
-            steps{
+        stage("TRIVY") {
+            steps {
                 sh "trivy image --format json -o trivy-image-report.json p3rryhehe/kltn1:v1"
-                sh "cat trivy-image-report.json" 
+                sh "cat trivy-image-report.json"
             }
         }
         stage('LLM Analysis') {
-    when {
-        expression { fileExists('trivy-image-report.json') }
-    }
-    steps {
-        sh '''
-            echo "[INFO] Starting LLM analysis (optimized for 5GB VM)..."
+            when {
+                expression { fileExists('trivy-image-report.json') }
+            }
+            steps {
+                sh '''
+                    echo "Starting LLM analysis..."
 
-            # Chạy Ollama nếu chưa khởi động, giữ sống 60s để tránh chiếm RAM lâu
-            pgrep ollama > /dev/null || (OLLAMA_KEEPALIVE=60 nohup ollama serve > /dev/null 2>&1 &)
-            sleep 2
+                    # Chạy Ollama nếu chưa khởi động, giữ sống 60s để tránh chiếm RAM lâu
+                    pgrep ollama > /dev/null || (OLLAMA_KEEPALIVE=60 nohup ollama serve > /dev/null 2>&1 &)
+                    sleep 2
 
-            # Lấy vulnerabilities nhỏ gọn (chỉ 100 đầu tiên để tránh quá tải)
-            VULNS=$(jq -c '[.Results[].Vulnerabilities[]? | {CVE: .VulnerabilityID, Pkg: .PkgName, Sev: .Severity, Desc: .Title, Ref: .PrimaryURL}] | .[:100]' trivy-image-report.json)
+                    # Lấy vulnerabilities nhỏ gọn (chỉ 100 đầu tiên để tránh quá tải)
+                    VULNS=$(jq -c '[.Results[].Vulnerabilities[]? | {CVE: .VulnerabilityID, Pkg: .PkgName, Sev: .Severity, Desc: .Title, Ref: .PrimaryURL}] | .[:100]' trivy-image-report.json)
 
-            if [ -z "$VULNS" ] || [ "$VULNS" = "[]" ]; then
-                echo "# Không phát hiện lỗ hổng" > analysis_ollama.json
-                cat analysis_ollama.json
-                exit 0
-            fi
+                    if [ -z "$VULNS" ] || [ "$VULNS" = "[]" ]; then
+                        echo "# Không phát hiện lỗ hổng" > analysis_ollama.json
+                        cat analysis_ollama.json
+                        exit 0
+                    fi
 
-            # Prompt tinh gọn, hạn chế token
-            PROMPT="Bạn là chuyên gia bảo mật. Hãy tóm tắt và phân tích các lỗ hổng bảo mật sau đây (JSON):
-            $VULNS
-            Yêu cầu:
-            1. Bảng tóm tắt số lượng lỗ hổng theo mức độ (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN).
-            2. Bảng chi tiết với cột: CVE | Gói | Mức độ | Mô tả đầy đủ | URL.
-            Output phải bằng tiếng Việt, trình bày Markdown rõ ràng, không thêm nội dung ngoài yêu cầu."
+                    # Prompt tinh gọn, hạn chế token
+                    PROMPT="Bạn là chuyên gia bảo mật. Hãy tóm tắt và phân tích các lỗ hổng bảo mật sau đây (JSON):
+                    $VULNS
+                    Yêu cầu:
+                    1. Bảng tóm tắt số lượng lỗ hổng theo mức độ (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN).
+                    2. Bảng chi tiết với cột: CVE | Gói | Mức độ | Mô tả đầy đủ | URL.
+                    Output phải bằng tiếng Việt, trình bày Markdown rõ ràng, không thêm nội dung ngoài yêu cầu."
 
-            # Giới hạn token để tránh hết RAM
-           ollama run llama3.2:1b "$PROMPT" > analysis_ollama.json
-
-
-        '''
-    }
-    post {
-        always {
-            archiveArtifacts artifacts: 'analysis_ollama.json', allowEmptyArchive: true
+                    # Giới hạn token để tránh hết RAM
+                    ollama run llama3.2:1b "$PROMPT" > analysis_ollama.json
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'analysis_ollama.json', allowEmptyArchive: true
+                }
+            }
         }
-    }
-}
-stage('Upload to DefectDojo') {
-    steps {
-        script {
-            withCredentials([
-                usernamePassword(credentialsId: 'dojo-admin', usernameVariable: 'DOJO_USER', passwordVariable: 'DOJO_PASS')
-            ]) {
-                
-                // Upload Trivy scan
-                sh '''
-                TRIVY_IMAGE_JSON="${WORKSPACE_PATH}/trivy-image-report.json"
-                LLM_REPORT_JSON="${WORKSPACE_PATH}/analysis_ollama.json"
-                if [ ! -f "${TRIVY_IMAGE_JSON}" ]; then
-                    echo "ERROR: File ${TRIVY_IMAGE_JSON} không tồn tại!"
-                    exit 1
-                fi
+        stage('Upload to DefectDojo') {
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(credentialsId: 'dojo-admin', usernameVariable: 'DOJO_USER', passwordVariable: 'DOJO_PASS')
+                    ]) {
 
-                echo "Uploading Trivy scan to DefectDojo..."
-                curl -k -X POST "${DOJO_URL}/api/v2/import-scan/" \
-                    -u "$DOJO_USER:$DOJO_PASS" \
-                    -F "scan_type=Trivy Scan" \
-                    -F "product_id=${DOJO_PRODUCT_ID}" \
-                    -F "engagement=3" \
-                    -F "file=@${TRIVY_IMAGE_JSON}" \
-                    -F "verified=True" \
-                    -F "active=True"
-                '''
+                        // Upload Trivy scan
+                        sh '''
+                        TRIVY_IMAGE_JSON="${WORKSPACE_PATH}/trivy-image-report.json"
+                        LLM_REPORT_JSON="${WORKSPACE_PATH}/analysis_ollama.json"
+                        if [ ! -f "${TRIVY_IMAGE_JSON}" ]; then
+                            echo "ERROR: File ${TRIVY_IMAGE_JSON} không tồn tại!"
+                            exit 1
+                        fi
 
-                // Upload LLM analysis report
-                sh '''
-                TRIVY_IMAGE_JSON="${WORKSPACE_PATH}/trivy-image-report.json"
-                LLM_REPORT_JSON="${WORKSPACE_PATH}/analysis_ollama.json"
-                if [ ! -f "${LLM_REPORT_JSON}" ]; then
-                    echo "ERROR: File ${LLM_REPORT_JSON} không tồn tại!"
-                    exit 1
-                fi
+                        echo "Uploading Trivy scan to DefectDojo..."
+                        curl -k -X POST "${DOJO_URL}/api/v2/import-scan/" \
+                            -u "$DOJO_USER:$DOJO_PASS" \
+                            -F "scan_type=Trivy Scan" \
+                            -F "product_id=${DOJO_PRODUCT_ID}" \
+                            -F "engagement=3" \
+                            -F "file=@${TRIVY_IMAGE_JSON}" \
+                            -F "verified=True" \
+                            -F "active=True"
+                        '''
 
-                echo "Uploading LLM analysis report to DefectDojo as Note..."
+                        // Upload LLM analysis report
+                        sh '''
+                        TRIVY_IMAGE_JSON="${WORKSPACE_PATH}/trivy-image-report.json"
+                        LLM_REPORT_JSON="${WORKSPACE_PATH}/analysis_ollama.json"
+                        if [ ! -f "${LLM_REPORT_JSON}" ]; then
+                            echo "ERROR: File ${LLM_REPORT_JSON} không tồn tại!"
+                            exit 1
+                        fi
 
-if [ ! -f "analysis_ollama.json" ]; then
-    echo "❌ File analysis_ollama.json không tồn tại!"
-    exit 1
-fi
+                        echo "Uploading LLM analysis report to DefectDojo as Note."
 
-NOTE_CONTENT=$(jq -Rs . analysis_ollama.json)
+                        if [ ! -f "analysis_ollama.json" ]; then
+                            echo "File analysis_ollama.json không tồn tại!"
+                            exit 1
+                        fi
 
-# Tạo payload JSON tạm
-cat <<EOF > note_payload.json
-{
-    "entry": ${NOTE_CONTENT},
-    "note_type_id": 1
-}
-EOF
+                        NOTE_CONTENT=$(jq -Rs . analysis_ollama.json)
 
-curl -k -X POST "${DOJO_URL}/api/v2/engagements/3/notes/" \
-    -u "$DOJO_USER:$DOJO_PASS" \
-    -H "Content-Type: application/json" \
-    -d @note_payload.json
-                '''
+                        # Tạo payload JSON tạm
+                        cat <<EOF > note_payload.json
+                        {
+                            "entry": ${NOTE_CONTENT},
+                            "note_type_id": 1
+                        }
+                        EOF
+
+                        curl -k -X POST "${DOJO_URL}/api/v2/engagements/3/notes/" \
+                            -u "$DOJO_USER:$DOJO_PASS" \
+                            -H "Content-Type: application/json" \
+                            -d @note_payload.json
+                        '''
+                    }
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-image-report.json, analysis_ollama.json', allowEmptyArchive: true
+                }
+            }
+        }
+        stage('Deploy to container') {
+            steps {
+                sh 'docker run -d -p 8024:80 p3rryhehe/kltn1:v1'
             }
         }
     }
     post {
         always {
-            archiveArtifacts artifacts: 'trivy-image-report.json, analysis_ollama.json', allowEmptyArchive: true
-        }
-    }
-}
-        stage('Deploy to container'){
-            steps{
-                sh 'docker run -d -p 8023:80 p3rryhehe/kltn1:v1'
-            }
-        }
-    }
-    post {
-     always {
-        emailext attachLog: true,
-            subject: "'${currentBuild.result}'",
-            body: "Project: ${env.JOB_NAME}<br/>" +
-                "Build Number: ${env.BUILD_NUMBER}<br/>" +
-                "URL: ${env.BUILD_URL}<br/>",
-            to: 'daoanhthienahihi@gmail.com',                               
-            attachmentsPattern: 'trivy-fs-report.json,trivy-image-report.json'
+            emailext attachLog: true,
+                subject: "'${currentBuild.result}'",
+                body: "Project: ${env.JOB_NAME}<br/>" +
+                    "Build Number: ${env.BUILD_NUMBER}<br/>" +
+                    "URL: ${env.BUILD_URL}<br/>",
+                to: 'daoanhthienahihi@gmail.com',
+                attachmentsPattern: 'trivy-fs-report.json,trivy-image-report.json'
         }
     }
 }
