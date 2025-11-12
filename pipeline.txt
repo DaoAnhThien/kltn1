@@ -7,7 +7,10 @@ pipeline{
     environment {
         SCANNER_HOME=tool 'sonar-scanner'
         GROQ_API_KEY = credentials('groq')
-        WORKSPACE_PATH = '/var/lib/jenkins/workspace/jenkins-pipeline'
+        WORKSPACE_PATH = '/var/lib/jenkins/workspace/netflix'
+        DOJO_URL = 'http://127.0.0.1:8089'
+        DOJO_PRODUCT_ID = '2'
+        DOJO_PRODUCT_NAME = 'Netflix Clone App'
     }
     stages {
         stage('clean workspace'){
@@ -104,9 +107,76 @@ pipeline{
         }
     }
 }
+stage('Upload to DefectDojo') {
+    steps {
+        script {
+            withCredentials([
+                usernamePassword(credentialsId: 'dojo-admin', usernameVariable: 'DOJO_USER', passwordVariable: 'DOJO_PASS')
+            ]) {
+                
+                // Upload Trivy scan
+                sh '''
+                TRIVY_IMAGE_JSON="${WORKSPACE_PATH}/trivy-image-report.json"
+                LLM_REPORT_JSON="${WORKSPACE_PATH}/analysis_ollama.json"
+                if [ ! -f "${TRIVY_IMAGE_JSON}" ]; then
+                    echo "ERROR: File ${TRIVY_IMAGE_JSON} không tồn tại!"
+                    exit 1
+                fi
+
+                echo "Uploading Trivy scan to DefectDojo..."
+                curl -k -X POST "${DOJO_URL}/api/v2/import-scan/" \
+                    -u "$DOJO_USER:$DOJO_PASS" \
+                    -F "scan_type=Trivy Scan" \
+                    -F "product_id=${DOJO_PRODUCT_ID}" \
+                    -F "engagement=3" \
+                    -F "file=@${TRIVY_IMAGE_JSON}" \
+                    -F "verified=True" \
+                    -F "active=True"
+                '''
+
+                // Upload LLM analysis report
+                sh '''
+                TRIVY_IMAGE_JSON="${WORKSPACE_PATH}/trivy-image-report.json"
+                LLM_REPORT_JSON="${WORKSPACE_PATH}/analysis_ollama.json"
+                if [ ! -f "${LLM_REPORT_JSON}" ]; then
+                    echo "ERROR: File ${LLM_REPORT_JSON} không tồn tại!"
+                    exit 1
+                fi
+
+                echo "Uploading LLM analysis report to DefectDojo as Note..."
+
+if [ ! -f "analysis_ollama.json" ]; then
+    echo "❌ File analysis_ollama.json không tồn tại!"
+    exit 1
+fi
+
+NOTE_CONTENT=$(jq -Rs . analysis_ollama.json)
+
+# Tạo payload JSON tạm
+cat <<EOF > note_payload.json
+{
+    "entry": ${NOTE_CONTENT},
+    "note_type_id": 1
+}
+EOF
+
+curl -k -X POST "${DOJO_URL}/api/v2/engagements/3/notes/" \
+    -u "$DOJO_USER:$DOJO_PASS" \
+    -H "Content-Type: application/json" \
+    -d @note_payload.json
+                '''
+            }
+        }
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'trivy-image-report.json, analysis_ollama.json', allowEmptyArchive: true
+        }
+    }
+}
         stage('Deploy to container'){
             steps{
-                sh 'docker run -d -p 8014:80 p3rryhehe/kltn1:v1'
+                sh 'docker run -d -p 8023:80 p3rryhehe/kltn1:v1'
             }
         }
     }
@@ -122,4 +192,3 @@ pipeline{
         }
     }
 }
-
