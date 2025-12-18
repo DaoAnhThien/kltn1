@@ -11,6 +11,9 @@ pipeline {
         DOJO_URL = 'http://127.0.0.1:8089'
         DOJO_PRODUCT_ID = '2'
         DOJO_PRODUCT_NAME = 'Netflix Clone App'
+        ARGOCD_SERVER = "https://localhost:8001"
+        ARGO_USER = "admin"
+        ARGO_PASS = "PQA-O95ib7YdH5iN"
     }
     stages {
         stage('clean workspace') {
@@ -172,9 +175,45 @@ pipeline {
                 }
             }
         }
-        stage('Deploy to container') {
+        stage('ArgoCD start') {
             steps {
-                sh 'docker run -d -p 8024:80 p3rryhehe/kltn1:v1'
+                script {
+                    withCredentials([
+                        usernamePassword(credentialsId: 'argocd', usernameVariable: 'ARGO_USER', passwordVariable: 'ARGO_PASS'),
+                        file(credentialsId: 'minikube', variable: 'kubeconfig')
+                    ]) {
+        
+                        withKubeConfig([credentialsId: 'minikube']) {
+        
+                            sh """
+                                # Port-forward ArgoCD
+                                kubectl port-forward svc/argocd-server -n argocd 8001:443 >/dev/null 2>&1 &
+                                sleep 5
+                            
+                                # Login
+                                TOKEN=\$(curl -sk -X POST https://localhost:8001/api/v1/session \\
+                                  -H "Content-Type: application/json" \\
+                                  -d "{\\"username\\":\\"$ARGO_USER\\",\\"password\\":\\"$ARGO_PASS\\"}" \\
+                                  | jq -r .token)
+                            
+                                if [ -z "\$TOKEN" ] || [ "\$TOKEN" = "null" ]; then
+                                    echo "Failed to get ArgoCD token"
+                                    exit 1
+                                fi
+                            
+                                echo "Token received: \$TOKEN"
+                            
+                                # Sync app
+                                curl -sk -X POST https://localhost:8001/api/v1/applications/netflix/sync \\
+                                  -H "Authorization: Bearer \$TOKEN" \\
+                                  -H "Content-Type: application/json" \\
+                                  -d '{ "prune": false, "dryRun": false }'
+                            
+                                echo "Sync request sent"
+                            """
+                        }
+                    }
+                }
             }
         }
     }
