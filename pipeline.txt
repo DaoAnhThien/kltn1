@@ -13,7 +13,6 @@ pipeline {
         DOJO_PRODUCT_NAME = 'Netflix Clone App'
         ARGOCD_SERVER = "https://localhost:8001"
         ARGO_USER = "admin"
-        ARGO_PASS = "PQA-O95ib7YdH5iN"
     }
     stages {
         stage('clean workspace') {
@@ -47,22 +46,47 @@ pipeline {
         }
         stage('TRIVY FS SCAN') {
             steps {
-                sh "trivy fs --format table -o trivy-fs-report.json ."
+                sh "trivy fs --format json -o trivy-fs-report.json ."
             }
         }
-        stage("Docker Build & Push") {
+        stage("Docker Build, Sign & Push (Content Trust)") {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                        withCredentials([string(credentialsId: 'tmdb-api-key', variable: 'TMDB_API_KEY')]) {
-                            sh "docker build --build-arg TMDB_V3_API_KEY=\${TMDB_API_KEY} -t netflix ."
-                            sh "docker tag netflix p3rryhehe/kltn1:v1"
-                            sh "docker push p3rryhehe/kltn1:v1"
+                        withCredentials([
+                            string(credentialsId: 'tmdb-api-key', variable: 'TMDB_API_KEY'),
+                            string(credentialsId: 'dct-root-passphrase', variable: 'DCT_ROOT_PASSPHRASE'),
+                            string(credentialsId: 'dct-repo-passphrase', variable: 'DCT_REPO_PASSPHRASE')
+                        ]) {
+                            sh '''
+                                export DOCKER_BUILDKIT=1
+                                export DOCKER_CONTENT_TRUST=1
+                        
+                                export DOCKER_CONTENT_TRUST_ROOT_PASSPHRASE="$DCT_ROOT_PASSPHRASE"
+                                export DOCKER_CONTENT_TRUST_REPOSITORY_PASSPHRASE="$DCT_REPO_PASSPHRASE"
+                        
+                                docker build \
+                                  --secret id=tmdb_api_key,env=TMDB_API_KEY \
+                                  -t p3rryhehe/kltn1:v1 .
+                        
+                                docker push p3rryhehe/kltn1:v1
+                            '''
                         }
                     }
                 }
             }
         }
+    
+
+        stage("Verify Docker Image Signature") {
+            steps {
+                sh '''
+                    export DOCKER_CONTENT_TRUST=1
+                    docker trust inspect --pretty p3rryhehe/kltn1:v1
+                '''
+            }
+        }
+
         stage("TRIVY") {
             steps {
                 sh "trivy image --format json -o trivy-image-report.json p3rryhehe/kltn1:v1"
